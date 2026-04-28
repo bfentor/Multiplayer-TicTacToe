@@ -58,7 +58,32 @@ def menu():
             print("Choice not found. Pick again")
 
 def joinRoom():
-    print("temp")
+    if client.s == None:
+        ip = choice = input("Server IP: ")
+        ret = client.connect(ip)
+        if ret == 1:
+            print("Couldn't connect to server")
+            sys.exit()
+    
+    rooms = client.queryServer()
+
+    if len(rooms) == 0:
+        print("No rooms found. Try creating one")
+        return
+
+    for room in rooms:
+        print(room)
+    
+    try:
+        choice = int(input("Choose room: "))
+    except KeyboardInterrupt:
+        print("Program exit")
+        sys.exit()
+    except:
+        print("Bad input. Try again")
+
+    client.join(choice)
+
 
 def createRoom():
     print("temp")
