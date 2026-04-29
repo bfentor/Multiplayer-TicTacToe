@@ -6,7 +6,7 @@ import threading
 import pickle
 import sys
 
-
+ip = "127.0.0.1"
 port = 87985
 rooms = {}
 socket_room = {}
@@ -14,14 +14,14 @@ wins = {}
 lock = threading.Lock()
 
 def main():
-    load_dotenv()
+    # load_dotenv()
     logging.basicConfig(
         format="{asctime} - {levelname} - {message}",
         style="{",
         level=logging.DEBUG,
     )
-    ip = os.getenv("SERVER_IP")
-    port = int(os.getenv("PORT"))
+    # ip = os.getenv("SERVER_IP")
+    # port = int(os.getenv("PORT"))
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
