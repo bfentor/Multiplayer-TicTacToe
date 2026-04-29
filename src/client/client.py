@@ -67,6 +67,18 @@ def get_state(room: int):
     return receive_response()
 
 
+def set_name(name: str):
+    if s is None:
+        raise RuntimeError("Socket is not connected")
+    send_request(f"SET_NAME:{name}")
+
+
+def receive_update():
+    if s is None:
+        raise RuntimeError("Socket is not connected")
+    return receive_response()
+
+
 def close():
     global s
     if s is not None:

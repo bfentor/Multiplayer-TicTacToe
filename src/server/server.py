@@ -4,30 +4,54 @@ import os
 import logging
 import threading
 import pickle
+import sys
 
 port = 8000
 rooms = {}
 socket_room = {}
+wins = {}
 lock = threading.Lock()
 
+def main():
+    load_dotenv()
+    logging.basicConfig(
+        format="{asctime} - {levelname} - {message}",
+        style="{",
+        level=logging.DEBUG,
+    )
+    ip = os.getenv("SERVER_IP")
+    port = int(os.getenv("PORT"))
 
-def create_room(room_id=1):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.bind((ip, port))
+            server.listen(5)
+            logging.info(f"Listening at {ip}:{port}")
+            while True:
+                c_socket, c_addr = server.accept()
+                logging.info(f"Accepted connection from {c_addr[0]}:{c_addr[1]}")
+                thread = threading.Thread(target=handleClient, args=(c_socket, c_addr), daemon=True)
+                thread.start()
+    except Exception as e:
+        logging.critical(f"Exception occurred: {e}")
+
+def createRoom(room_id=1):
     return {
         "matrix": [[" ", " ", " "] for _ in range(3)],
         "players": [],
         "symbols": {},
+        "names": {},
         "next": "X",
         "winner": None,
         "moves": 0,
     }
 
-
-def send_response(sock, data):
+def sendResponse(sock, data):
     payload = pickle.dumps(data)
     sock.sendall(len(payload).to_bytes(4, "big") + payload)
 
 
-def recv_request(sock):
+def recvRequest(sock):
     header = sock.recv(4)
     if not header:
         return None
@@ -41,10 +65,10 @@ def recv_request(sock):
     return data.decode("utf-8")
 
 
-def available_rooms():
+def availableRooms():
     with lock:
         if not rooms:
-            rooms[1] = create_room(1)
+            rooms[1] = createRoom(1)
         results = []
         for room_id, room in rooms.items():
             count = len(room["players"])
@@ -53,15 +77,15 @@ def available_rooms():
         return results
 
 
-def room_for_socket(sock):
+def roomForSocket(sock):
     return socket_room.get(sock)
 
 
-def player_symbol(room, sock):
+def playerSymbol(room, sock):
     return room["symbols"].get(sock)
 
 
-def current_state(room_id, message=""):
+def currentState(room_id, message=""):
     room = rooms[room_id]
     return {
         "type": "STATE",
@@ -71,12 +95,26 @@ def current_state(room_id, message=""):
         "winner": room["winner"],
         "player_count": len(room["players"]),
         "message": message,
+        "player_names": {room["symbols"][sock]: room["names"][sock] for sock in room["players"]},
+        "wins": {room["symbols"][sock]: wins.get(sock, 0) for sock in room["players"]},
     }
 
 
-def join_room(room_id, sock):
+def broadcastState(room_id, exclude_sock=None, message=""):
+    room = rooms[room_id]
+    state = currentState(room_id, message)
+    for player_sock in room["players"]:
+        if player_sock is exclude_sock:
+            continue
+        try:
+            sendResponse(player_sock, state)
+        except Exception as e:
+            logging.warning(f"Could not send update to opponent: {e}")
+
+
+def joinRoom(room_id, sock):
     with lock:
-        room = rooms.setdefault(room_id, create_room(room_id))
+        room = rooms.setdefault(room_id, createRoom(room_id))
 
         if len(room["players"]) >= 2 and sock not in room["players"]:
             return {"type": "ERROR", "message": "Room is full."}
@@ -85,6 +123,7 @@ def join_room(room_id, sock):
             symbol = "X" if len(room["players"]) == 0 else "O"
             room["players"].append(sock)
             room["symbols"][sock] = symbol
+            room["names"][sock] = f"Player {len(room['players'])}"
             socket_room[sock] = room_id
         else:
             symbol = room["symbols"][sock]
@@ -95,19 +134,25 @@ def join_room(room_id, sock):
         else:
             message += "Opponent connected. Game ready."
 
-        state = current_state(room_id, message)
+        state = currentState(room_id, message)
         state["type"] = "JOIN_ACK"
         state["your_symbol"] = symbol
+        if len(room["players"]) == 2:
+            other_sock = next(player for player in room["players"] if player is not sock)
+            try:
+                sendResponse(other_sock, currentState(room_id, "Opponent connected. Game ready."))
+            except Exception as e:
+                logging.warning(f"Could not notify waiting player: {e}")
         return state
 
 
-def valid_move(room, row, col):
+def validMove(room, row, col):
     if row not in range(3) or col not in range(3):
         return False
     return room["matrix"][row][col] == " "
 
 
-def check_winner(matrix):
+def checkWinner(matrix):
     lines = []
     lines.extend(matrix)
     lines.extend([[matrix[r][c] for r in range(3)] for c in range(3)])
@@ -119,36 +164,39 @@ def check_winner(matrix):
     return None
 
 
-def process_move(room_id, sock, row, col):
+def processMove(room_id, sock, row, col):
     with lock:
         if room_id not in rooms:
             return {"type": "ERROR", "message": "Room does not exist."}
         room = rooms[room_id]
-        symbol = player_symbol(room, sock)
+        symbol = playerSymbol(room, sock)
         if symbol is None:
             return {"type": "ERROR", "message": "You are not in that room."}
         if len(room["players"]) < 2:
-            state = current_state(room_id, "Waiting for opponent to join before the game begins.")
+            state = currentState(room_id, "Waiting for opponent to join before the game begins.")
             state["type"] = "ERROR"
             return state
         if room["winner"] is not None:
-            state = current_state(room_id, "Game is already over.")
+            state = currentState(room_id, "Game is already over.")
             state["type"] = "ERROR"
             return state
         if symbol != room["next"]:
-            state = current_state(room_id, "It is not your turn.")
+            state = currentState(room_id, "It is not your turn.")
             state["type"] = "ERROR"
             return state
-        if not valid_move(room, row, col):
-            state = current_state(room_id, "Invalid move. Try again.")
+        if not validMove(room, row, col):
+            state = currentState(room_id, "Invalid move. Try again.")
             state["type"] = "ERROR"
             return state
 
         room["matrix"][row][col] = symbol
         room["moves"] += 1
-        winner = check_winner(room["matrix"])
+        winner = checkWinner(room["matrix"])
         if winner:
             room["winner"] = winner
+            if winner != "DRAW":
+                winner_sock = next(sock for sock in room["players"] if room["symbols"][sock] == winner)
+                wins[winner_sock] = wins.get(winner_sock, 0) + 1
             message = f"{winner} wins!"
         elif room["moves"] >= 9:
             room["winner"] = "DRAW"
@@ -157,44 +205,55 @@ def process_move(room_id, sock, row, col):
             room["next"] = "O" if room["next"] == "X" else "X"
             message = f"Move accepted: {symbol} at {row + 1},{col + 1}."
 
-        return current_state(room_id, message)
+        state = currentState(room_id, message)
+        broadcastState(room_id, exclude_sock=sock, message=message)
+        return state
 
 
-def handle_client(c_socket, c_addr):
+def handleClient(c_socket, c_addr):
     try:
         while True:
-            request = recv_request(c_socket)
+            request = recvRequest(c_socket)
             if request is None:
                 break
             logging.info(f"Received: {request}")
 
             if request == "QUERY_ROOMS":
-                send_response(c_socket, available_rooms())
+                sendResponse(c_socket, availableRooms())
                 continue
 
             if request.startswith("JOIN:"):
                 _, room_id_text = request.split(":", 1)
                 room_id = int(room_id_text)
-                response = join_room(room_id, c_socket)
-                send_response(c_socket, response)
+                response = joinRoom(room_id, c_socket)
+                sendResponse(c_socket, response)
                 continue
 
             if request.startswith("MOVE:"):
                 _, payload = request.split(":", 1)
                 row, col = map(int, payload.split(","))
-                room_id = room_for_socket(c_socket)
+                room_id = roomForSocket(c_socket)
                 if room_id is None:
-                    send_response(c_socket, {"type": "ERROR", "message": "Not joined in any room."})
+                    sendResponse(c_socket, {"type": "ERROR", "message": "Not joined in any room."})
                 else:
-                    response = process_move(room_id, c_socket, row, col)
-                    send_response(c_socket, response)
+                    response = processMove(room_id, c_socket, row, col)
+                    sendResponse(c_socket, response)
                 continue
 
             if request.startswith("GET_STATE:"):
                 _, room_id_text = request.split(":", 1)
                 room_id = int(room_id_text)
-                response = current_state(room_id, "Current board state")
-                send_response(c_socket, response)
+                response = currentState(room_id, "Current board state")
+                sendResponse(c_socket, response)
+                continue
+
+            if request.startswith("SET_NAME:"):
+                _, name = request.split(":", 1)
+                room_id = roomForSocket(c_socket)
+                if room_id:
+                    room = rooms[room_id]
+                    room["names"][c_socket] = name
+                    # broadcastState(room_id, message=f"Player {room['symbols'][c_socket]} changed name to {name}")
                 continue
 
             if request.startswith("QUIT"):
@@ -215,24 +274,8 @@ def handle_client(c_socket, c_addr):
 
 
 if __name__ == "__main__":
-    load_dotenv()
-    logging.basicConfig(
-        format="{asctime} - {levelname} - {message}",
-        style="{",
-        level=logging.DEBUG,
-    )
-    ip = os.getenv("SERVER_IP")
-    port = int(os.getenv("PORT"))
-
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-            server.bind((ip, port))
-            server.listen(5)
-            logging.info(f"Listening at {ip}:{port}")
-            while True:
-                c_socket, c_addr = server.accept()
-                logging.info(f"Accepted connection from {c_addr[0]}:{c_addr[1]}")
-                thread = threading.Thread(target=handle_client, args=(c_socket, c_addr), daemon=True)
-                thread.start()
-    except Exception as e:
-        logging.critical(f"Exception occurred: {e}")
+        main()
+    except KeyboardInterrupt:
+        print("Keyboard interrupt")
+        sys.exit()

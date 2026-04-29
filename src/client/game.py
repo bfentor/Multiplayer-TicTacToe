@@ -87,6 +87,10 @@ def joinRoom():
         print(state.get("message", "Could not join room."))
         return
 
+    name = input("Enter your name (press enter for default): ").strip()
+    if name:
+        client.set_name(name)
+
     play_game(state)
 
 
@@ -102,6 +106,11 @@ def createRoom():
     if state.get("type") == "ERROR":
         print(state.get("message", "Could not create room."))
         return
+
+    name = input("Enter your name (press enter for default): ").strip()
+    if name:
+        client.set_name(name)
+
     play_game(state)
 
 
@@ -113,14 +122,15 @@ def play_game(state):
     winner = state["winner"]
 
     while True:
-        printBoard(matrix)
+        printBoard(matrix, state.get("player_names", {}), state.get("wins", {}), player_symbol)
         if winner:
             if winner == "DRAW":
                 print("Game over: Draw.")
             elif winner == player_symbol:
                 print("Game over: You win!")
             else:
-                print("Game over: Opponent wins.")
+                winner_name = state.get("player_names", {}).get(winner, f"Player {winner}")
+                print(f"Game over: {winner_name} wins!")
             client.close()
             sys.exit()
             return
@@ -128,8 +138,7 @@ def play_game(state):
         print(state.get("message", ""))
         if state.get("player_count", 0) < 2:
             print("Waiting for opponent to join...")
-            sleep(1)
-            state = client.get_state(room_id)
+            state = client.receive_update()
             matrix = state.get("matrix", matrix)
             next_symbol = state.get("next", next_symbol)
             winner = state.get("winner", winner)
@@ -153,8 +162,7 @@ def play_game(state):
                 continue
         else:
             print(f"Waiting for opponent ({next_symbol})...")
-            sleep(1)
-            state = client.get_state(room_id)
+            state = client.receive_update()
 
         if state.get("type") == "ERROR":
             print(state.get("message", "An error occurred."))
@@ -169,14 +177,22 @@ def play_game(state):
         winner = state["winner"]
 
 
-def printBoard(matrix):
+def printBoard(matrix, player_names, wins, player_symbol):
     os.system('cls' if os.name == 'nt' else 'clear')
+    your_name = player_names.get(player_symbol, f"Player {player_symbol}")
+    opp_symbol = "O" if player_symbol == "X" else "X"
+    opp_name = player_names.get(opp_symbol, f"Player {opp_symbol}")
+    your_wins = wins.get(player_symbol, 0)
+    opp_wins = wins.get(opp_symbol, 0)
     board = f'''
  {matrix[0][0]} | {matrix[0][1]} | {matrix[0][2]}
 ---+---+---
  {matrix[1][0]} | {matrix[1][1]} | {matrix[1][2]}
 ---+---+---
  {matrix[2][0]} | {matrix[2][1]} | {matrix[2][2]}
+
+You: {your_name} ({player_symbol}) - Wins: {your_wins}
+Opponent: {opp_name} ({opp_symbol}) - Wins: {opp_wins}
 '''
     print(board)
 
