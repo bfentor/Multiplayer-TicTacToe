@@ -1,7 +1,7 @@
 import socket
 import pickle
 
-port = 87985
+port = 34985
 s = None
 
 

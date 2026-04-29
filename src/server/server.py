@@ -7,7 +7,7 @@ import pickle
 import sys
 
 ip = "127.0.0.1"
-port = 87985
+port = 34985
 rooms = {}
 socket_room = {}
 wins = {}
