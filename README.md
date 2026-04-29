@@ -9,7 +9,11 @@ pip install -r requirements.txt
 ## Running client and server
 
 #### Client
-`python src/client/game.py`
+```
+python src/client/game.py
+```
 
 #### Server
-`python src/server/server.py`
+```
+python src/server/server.py
+```
