@@ -6,7 +6,8 @@ import threading
 import pickle
 import sys
 
-port = 8000
+
+port = 87985
 rooms = {}
 socket_room = {}
 wins = {}
